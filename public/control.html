@@ -679,7 +679,7 @@
     let selectedVideos = [];
     let popupActive = false;
     let isUpdating = false;
-    let stateInterval = null;
+    let timerInterval = null;
     let popupInterval = null;
     let spotifyInterval = null;
     
@@ -712,7 +712,6 @@
         console.log('Auth check:', data);
         
         if (!data.authRequired) {
-          // Auth disabled - auto login
           sessionId = generateSessionId();
           const loginRes = await fetch(`${API_URL}/api/auth/verify`, {
             method: 'POST',
@@ -725,7 +724,6 @@
             showMainContainer(loginData.user);
           }
         } else {
-          // Auth enabled - show login
           loginScreen.classList.remove('hidden');
         }
       } catch (err) {
@@ -801,8 +799,7 @@
       checkSpotifyConnection();
       loadVideos();
       loadPopupState();
-      loadState();
-      stateInterval = setInterval(loadState, 1000);
+      startTimerPolling();
       popupInterval = setInterval(loadPopupState, 3000);
       spotifyInterval = setInterval(updateSpotifyStatus, 2000);
     }
@@ -845,7 +842,16 @@
       currentLanguage = 'de';
       document.getElementById('btnGerman').classList.add('active');
       document.getElementById('btnEnglish').classList.remove('active');
-      await updateState({ language: 'de' });
+      
+      try {
+        await fetch(`${API_URL}/api/timer/language`, {
+          method: 'POST',
+          headers: getHeaders(),
+          body: JSON.stringify({ language: 'de' })
+        });
+      } catch (err) {
+        console.error('Language change error:', err);
+      }
     });
     
     document.getElementById('btnEnglish').addEventListener('click', async () => {
@@ -853,8 +859,184 @@
       currentLanguage = 'en';
       document.getElementById('btnEnglish').classList.add('active');
       document.getElementById('btnGerman').classList.remove('active');
-      await updateState({ language: 'en' });
+      
+      try {
+        await fetch(`${API_URL}/api/timer/language`, {
+          method: 'POST',
+          headers: getHeaders(),
+          body: JSON.stringify({ language: 'en' })
+        });
+      } catch (err) {
+        console.error('Language change error:', err);
+      }
     });
+    
+    // ============================================
+    // TIMER MODULE
+    // ============================================
+    
+    async function loadTimerState() {
+      if (!sessionId || isUpdating) return;
+      
+      try {
+        const res = await fetch(`${API_URL}/api/timer`, {
+          headers: getHeaders()
+        });
+        const timer = await res.json();
+        
+        updateTimerUI(timer);
+        updateLanguageUI(timer.language);
+      } catch (err) {
+        console.error('Load timer error:', err);
+      }
+    }
+    
+    function updateTimerUI(timer) {
+      const previewTime = document.getElementById('previewTime');
+      const previewEnd = document.getElementById('previewEnd');
+      const timerPanel = document.getElementById('timerPanel');
+      const startBtn = document.getElementById('startBtn');
+      const pauseBtn = document.getElementById('pauseBtn');
+      const resetBtn = document.getElementById('resetBtn');
+      
+      if (timer.isRunning && timer.remaining > 0) {
+        const mins = Math.floor(timer.remaining / 60);
+        const secs = timer.remaining % 60;
+        previewTime.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        
+        if (timer.endTime && !timer.isPaused) {
+          const endDate = new Date(timer.endTime);
+          const hours = endDate.getHours().toString().padStart(2, '0');
+          const minutes = endDate.getMinutes().toString().padStart(2, '0');
+          previewEnd.textContent = `Resume: ${hours}:${minutes} Uhr`;
+        } else {
+          previewEnd.textContent = 'Paused';
+        }
+        
+        timerPanel.classList.add('running');
+        startBtn.classList.add('hidden');
+        pauseBtn.classList.remove('hidden');
+        resetBtn.classList.remove('hidden');
+        
+        if (timer.isPaused) {
+          pauseBtn.textContent = '▶️ Resume';
+        } else {
+          pauseBtn.textContent = '⏸️ Pause';
+        }
+      } else {
+        previewTime.textContent = '00:00';
+        previewEnd.textContent = 'Resume: --:-- Uhr';
+        timerPanel.classList.remove('running');
+        startBtn.classList.remove('hidden');
+        pauseBtn.classList.add('hidden');
+        resetBtn.classList.add('hidden');
+      }
+    }
+    
+    function updateLanguageUI(lang) {
+      if (lang === 'de') {
+        document.getElementById('btnGerman').classList.add('active');
+        document.getElementById('btnEnglish').classList.remove('active');
+      } else {
+        document.getElementById('btnEnglish').classList.add('active');
+        document.getElementById('btnGerman').classList.remove('active');
+      }
+    }
+    
+    function startTimerPolling() {
+      if (timerInterval) {
+        clearInterval(timerInterval);
+      }
+      
+      timerInterval = setInterval(loadTimerState, 1000);
+      loadTimerState();
+    }
+    
+    document.getElementById('startBtn').addEventListener('click', async () => {
+      if (!sessionId) return;
+      isUpdating = true;
+      
+      const minutes = parseInt(document.getElementById('timeInput').value) || 5;
+      
+      try {
+        const res = await fetch(`${API_URL}/api/timer/start`, {
+          method: 'POST',
+          headers: getHeaders(),
+          body: JSON.stringify({ minutes })
+        });
+        
+        if (!res.ok) {
+          console.error('Start timer failed:', res.status);
+          isUpdating = false;
+          return;
+        }
+        
+        await loadTimerState();
+        isUpdating = false;
+      } catch (err) {
+        console.error('Start timer error:', err);
+        isUpdating = false;
+      }
+    });
+    
+    document.getElementById('pauseBtn').addEventListener('click', async () => {
+      if (!sessionId) return;
+      isUpdating = true;
+      
+      try {
+        const res = await fetch(`${API_URL}/api/timer`, {
+          headers: getHeaders()
+        });
+        const currentState = await res.json();
+        
+        const endpoint = currentState.isPaused ? '/api/timer/resume' : '/api/timer/pause';
+        
+        const actionRes = await fetch(`${API_URL}${endpoint}`, {
+          method: 'POST',
+          headers: getHeaders()
+        });
+        
+        if (!actionRes.ok) {
+          console.error('Pause/Resume failed:', actionRes.status);
+          isUpdating = false;
+          return;
+        }
+        
+        await loadTimerState();
+        isUpdating = false;
+      } catch (err) {
+        console.error('Pause/Resume timer error:', err);
+        isUpdating = false;
+      }
+    });
+    
+    document.getElementById('resetBtn').addEventListener('click', async () => {
+      if (!sessionId) return;
+      isUpdating = true;
+      
+      try {
+        const res = await fetch(`${API_URL}/api/timer/reset`, {
+          method: 'POST',
+          headers: getHeaders()
+        });
+        
+        if (!res.ok) {
+          console.error('Reset timer failed:', res.status);
+          isUpdating = false;
+          return;
+        }
+        
+        await loadTimerState();
+        isUpdating = false;
+      } catch (err) {
+        console.error('Reset timer error:', err);
+        isUpdating = false;
+      }
+    });
+    
+    // ============================================
+    // SPOTIFY MODULE
+    // ============================================
     
     document.getElementById('spotifyConnectBtn').addEventListener('click', () => {
       window.open(`${API_URL}/spotify/login`, '_blank', 'width=500,height=700');
@@ -948,152 +1130,9 @@
       }
     });
     
-    async function loadState() {
-      if (!sessionId || isUpdating) return;
-      try {
-        const res = await fetch(`${API_URL}/api/state`, {
-          headers: getHeaders()
-        });
-        const state = await res.json();
-        
-        updateTimerUI(state);
-        if (state.language) {
-          updateLanguageUI(state.language);
-        }
-      } catch (err) {
-        console.error('Load state error:', err);
-      }
-    }
-    
-    function updateTimerUI(timer) {
-      const previewTime = document.getElementById('previewTime');
-      const previewEnd = document.getElementById('previewEnd');
-      const timerPanel = document.getElementById('timerPanel');
-      const startBtn = document.getElementById('startBtn');
-      const pauseBtn = document.getElementById('pauseBtn');
-      const resetBtn = document.getElementById('resetBtn');
-      
-      if (timer.isRunning && timer.remaining > 0) {
-        const mins = Math.floor(timer.remaining / 60);
-        const secs = timer.remaining % 60;
-        previewTime.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-        
-        if (timer.endTime) {
-          const endDate = new Date(timer.endTime);
-          previewEnd.textContent = `Resume: ${endDate.getHours().toString().padStart(2, '0')}:${endDate.getMinutes().toString().padStart(2, '0')} Uhr`;
-        }
-        
-        timerPanel.classList.add('running');
-        startBtn.classList.add('hidden');
-        pauseBtn.classList.remove('hidden');
-        resetBtn.classList.remove('hidden');
-        
-        if (timer.isPaused) {
-          pauseBtn.textContent = '▶️ Resume';
-        } else {
-          pauseBtn.textContent = '⏸️ Pause';
-        }
-      } else {
-        previewTime.textContent = '00:00';
-        previewEnd.textContent = 'Resume: --:-- Uhr';
-        timerPanel.classList.remove('running');
-        startBtn.classList.remove('hidden');
-        pauseBtn.classList.add('hidden');
-        resetBtn.classList.add('hidden');
-      }
-    }
-    
-    function updateLanguageUI(lang) {
-      if (lang === 'de') {
-        document.getElementById('btnGerman').classList.add('active');
-        document.getElementById('btnEnglish').classList.remove('active');
-      } else {
-        document.getElementById('btnEnglish').classList.add('active');
-        document.getElementById('btnGerman').classList.remove('active');
-      }
-    }
-    
-    async function updateState(data) {
-      if (!sessionId) return;
-      isUpdating = true;
-      try {
-        await fetch(`${API_URL}/api/state`, {
-          method: 'POST',
-          headers: getHeaders(),
-          body: JSON.stringify(data)
-        });
-        isUpdating = false;
-      } catch (err) {
-        console.error('Update state error:', err);
-        isUpdating = false;
-      }
-    }
-    
-    document.getElementById('startBtn').addEventListener('click', async () => {
-      if (!sessionId) return;
-      isUpdating = true;
-      const minutes = parseInt(document.getElementById('timeInput').value) || 5;
-      const seconds = minutes * 60;
-      
-      try {
-        await fetch(`${API_URL}/api/state`, {
-          method: 'POST',
-          headers: getHeaders(),
-          body: JSON.stringify({
-            duration: seconds,
-            remaining: seconds,
-            endTime: Date.now() + (seconds * 1000),
-            isPaused: false,
-            isRunning: true,
-            wasSkipped: false
-          })
-        });
-        isUpdating = false;
-      } catch (err) {
-        console.error('Start timer error:', err);
-        isUpdating = false;
-      }
-    });
-    
-    document.getElementById('pauseBtn').addEventListener('click', async () => {
-      if (!sessionId) return;
-      isUpdating = true;
-      
-      try {
-        const res = await fetch(`${API_URL}/api/state`, {
-          headers: getHeaders()
-        });
-        const currentState = await res.json();
-        
-        await fetch(`${API_URL}/api/state`, {
-          method: 'POST',
-          headers: getHeaders(),
-          body: JSON.stringify({
-            isPaused: !currentState.isPaused
-          })
-        });
-        isUpdating = false;
-      } catch (err) {
-        console.error('Pause timer error:', err);
-        isUpdating = false;
-      }
-    });
-    
-    document.getElementById('resetBtn').addEventListener('click', async () => {
-      if (!sessionId) return;
-      isUpdating = true;
-      
-      try {
-        await fetch(`${API_URL}/api/reset`, {
-          method: 'POST',
-          headers: getHeaders()
-        });
-        isUpdating = false;
-      } catch (err) {
-        console.error('Reset timer error:', err);
-        isUpdating = false;
-      }
-    });
+    // ============================================
+    // POPUP MODULE
+    // ============================================
     
     async function loadVideos() {
       if (!sessionId) return;
