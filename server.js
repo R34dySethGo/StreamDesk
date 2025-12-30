@@ -38,6 +38,13 @@ let popupState = {
   selectedVideos: []
 };
 
+let popupPlaylist = {
+  currentIndex: 0,
+  lastPlayedAt: null,
+  isWaiting: false,
+  waitMinutes: 10
+};
+
 // Timer State
 let timerState = {
   duration: 0,
@@ -327,14 +334,24 @@ app.post('/api/popup/state', getUserFromSession, (req, res) => {
   const { isActive, selectedVideos } = req.body;
   
   if (typeof isActive !== 'undefined') {
+    const wasInactive = !popupState.isActive;
     popupState.isActive = isActive;
+    
+    // Reset playlist when activating
+    if (isActive && wasInactive) {
+      popupPlaylist.currentIndex = 0;
+      popupPlaylist.lastPlayedAt = null;
+      popupPlaylist.isWaiting = false;
+      console.log('[POPUP] Activated - playlist reset, ready to play first video');
+    }
   }
   
   if (Array.isArray(selectedVideos)) {
     popupState.selectedVideos = selectedVideos;
   }
   
-  console.log(`[POPUP] State updated:`, popupState);
+  console.log('[POPUP] State updated:', popupState);
+  console.log('[POPUP] Playlist:', popupPlaylist);
   res.json(popupState);
 });
 
@@ -343,10 +360,46 @@ app.get('/api/popup/current', (req, res) => {
     return res.json({ video: null });
   }
   
-  const randomIndex = Math.floor(Math.random() * popupState.selectedVideos.length);
-  const video = popupState.selectedVideos[randomIndex];
+  const now = Date.now();
   
+  // If waiting for cooldown
+  if (popupPlaylist.isWaiting && popupPlaylist.lastPlayedAt) {
+    const elapsed = Math.floor((now - popupPlaylist.lastPlayedAt) / 1000 / 60);
+    const waitTime = popupPlaylist.waitMinutes;
+    
+    if (elapsed < waitTime) {
+      console.log(`[POPUP] Still waiting... ${elapsed}/${waitTime} min elapsed`);
+      return res.json({ video: null });
+    }
+    
+    // Cooldown over, ready to play next
+    popupPlaylist.isWaiting = false;
+    console.log('[POPUP] Cooldown finished, ready for next video');
+  }
+  
+  // Get current video
+  const video = popupState.selectedVideos[popupPlaylist.currentIndex];
+  
+  if (!video) {
+    console.error('[POPUP] No video at index', popupPlaylist.currentIndex);
+    return res.json({ video: null });
+  }
+  
+  console.log(`[POPUP] Serving video ${popupPlaylist.currentIndex + 1}/${popupState.selectedVideos.length}: ${video}`);
   res.json({ video });
+});
+
+app.post('/api/popup/ended', (req, res) => {
+  console.log('[POPUP] Video ended notification received');
+  
+  // Move to next video
+  popupPlaylist.currentIndex = (popupPlaylist.currentIndex + 1) % popupState.selectedVideos.length;
+  popupPlaylist.lastPlayedAt = Date.now();
+  popupPlaylist.isWaiting = true;
+  
+  console.log(`[POPUP] Next video index: ${popupPlaylist.currentIndex}, waiting ${popupPlaylist.waitMinutes} min`);
+  
+  res.json({ success: true });
 });
 
 // ============================================
