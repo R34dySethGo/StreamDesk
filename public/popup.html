@@ -44,9 +44,11 @@
       max-width: 90%;
       max-height: 90vh;
       object-fit: contain;
-      border-radius: 15px;
-      box-shadow: 0 10px 40px rgba(0,0,0,0.8);
+      border-radius: 0;
+      box-shadow: none;
       display: none;
+      border: none;
+      outline: none;
     }
     
     video.active {
@@ -83,63 +85,38 @@
     const videoElement = document.getElementById('popupVideo');
     const noVideoElement = document.getElementById('noVideo');
     
-    let currentVideoUrl = null;
-    let isPlaying = false;
+    // Get userId from URL parameter or use YT_ID
+    const urlParams = new URLSearchParams(window.location.search);
+    const userId = urlParams.get('user') || 'SD-A98DB'; // Default to first user
     
-    async function checkPlayVideo() {
+    let currentVideoUrl = null;
+    
+    async function checkCurrentVideo() {
       try {
-        const res = await fetch(`${API_URL}/api/popup/current`);
+        const res = await fetch(`${API_URL}/api/popup/current/${userId}`);
         const data = await res.json();
         
-        if (data.video && data.video !== currentVideoUrl) {
-          currentVideoUrl = data.video;
-          videoElement.src = `/pop/${data.video}`;
+        if (data.currentVideo && data.currentVideo !== currentVideoUrl) {
+          currentVideoUrl = data.currentVideo;
+          videoElement.src = `/pop/${userId}/${data.currentVideo}`;
           videoElement.classList.add('active');
           noVideoElement.style.opacity = '0';
-          isPlaying = true;
-          
-          console.log('[POPUP] Playing video:', data.video);
           
           videoElement.onended = () => {
-            console.log('[POPUP] Video ended, notifying server...');
             videoElement.classList.remove('active');
-            isPlaying = false;
-            currentVideoUrl = null;
-            notifyVideoEnded();
           };
-          
-          videoElement.onerror = () => {
-            console.error('[POPUP] Video load error:', data.video);
-            videoElement.classList.remove('active');
-            isPlaying = false;
-            currentVideoUrl = null;
-          };
-          
-        } else if (!data.video && isPlaying) {
+        } else if (!data.currentVideo) {
           videoElement.classList.remove('active');
-          isPlaying = false;
           currentVideoUrl = null;
         }
       } catch (err) {
-        console.error('[POPUP] Error fetching video:', err);
-      }
-    }
-    
-    async function notifyVideoEnded() {
-      try {
-        await fetch(`${API_URL}/api/popup/ended`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' }
-        });
-        console.log('[POPUP] Server notified of video end');
-      } catch (err) {
-        console.error('[POPUP] Error notifying server:', err);
+        console.error('Error fetching video:', err);
       }
     }
     
     // Check every 2 seconds
-    setInterval(checkPlayVideo, 2000);
-    checkPlayVideo();
+    setInterval(checkCurrentVideo, 2000);
+    checkCurrentVideo();
   </script>
 </body>
 </html>
