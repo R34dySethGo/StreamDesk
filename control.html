@@ -1,0 +1,26 @@
+document.getElementById('startBtn').addEventListener('click', async () => {
+  if (!sessionId) return;
+  isUpdating = true;
+  const minutes = parseInt(document.getElementById('timeInput').value) || 5;
+  const seconds = minutes * 60;
+  
+  try {
+    // FIXED: No more +2 hack needed!
+    await fetch(`${API_URL}/api/state`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({
+        duration: seconds,      // ← Kein +2 mehr!
+        remaining: seconds,     // ← Kein +2 mehr!
+        endTime: Date.now() + (seconds * 1000),
+        isPaused: false,
+        isRunning: true,
+        wasSkipped: false
+      })
+    });
+    isUpdating = false;
+  } catch (err) {
+    console.error('Start timer error:', err);
+    isUpdating = false;
+  }
+});
