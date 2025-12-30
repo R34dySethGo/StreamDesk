@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pop-Up Display</title>
+  <style>
+    @font-face {
+      font-family: 'CustomStreamFont';
+      src: url('/fonts/font.ttf') format('truetype');
+      font-weight: normal;
+      font-style: normal;
+      font-display: swap;
+    }
+    
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      background: transparent;
+      font-family: 'CustomStreamFont', Arial, sans-serif;
+      color: white;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+    
+    .video-container {
+      position: relative;
+      width: 100%;
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: transparent;
+    }
+    
+    video {
+      max-width: 90%;
+      max-height: 90vh;
+      object-fit: contain;
+      border-radius: 15px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.8);
+      display: none;
+    }
+    
+    video.active {
+      display: block;
+      animation: fadeIn 0.5s ease-in;
+    }
+    
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: scale(0.95);
+      }
+      to {
+        opacity: 1;
+        transform: scale(1);
+      }
+    }
+    
+    .no-video {
+      font-size: 48px;
+      text-align: center;
+      opacity: 0;
+      text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+    }
+  </style>
+</head>
+<body>
+  <div class="video-container">
+    <video id="popupVideo" autoplay muted></video>
+    <div class="no-video" id="noVideo"></div>
+  </div>
+  <script>
+    const API_URL = window.location.origin;
+    const videoElement = document.getElementById('popupVideo');
+    const noVideoElement = document.getElementById('noVideo');
+    
+    let currentVideoUrl = null;
+    
+    async function checkCurrentVideo() {
+      try {
+        const res = await fetch(`${API_URL}/api/popup/current`);
+        const data = await res.json();
+        
+        if (data.currentVideo && data.currentVideo !== currentVideoUrl) {
+          currentVideoUrl = data.currentVideo;
+          videoElement.src = `/pop/${data.currentVideo}`;
+          videoElement.classList.add('active');
+          noVideoElement.style.opacity = '0';
+          
+          videoElement.onended = () => {
+            videoElement.classList.remove('active');
+          };
+        } else if (!data.currentVideo) {
+          videoElement.classList.remove('active');
+          currentVideoUrl = null;
+        }
+      } catch (err) {
+        console.error('Error fetching video:', err);
+      }
+    }
+    
+    // Check every 2 seconds
+    setInterval(checkCurrentVideo, 2000);
+    checkCurrentVideo();
+  </script>
+</body>
+</html>

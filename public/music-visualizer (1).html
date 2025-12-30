@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Now Playing</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      background: transparent;
+      font-family: Arial, sans-serif;
+      color: white;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    
+    .now-playing {
+      background: rgba(26, 26, 26, 0.95);
+      border-radius: 20px;
+      padding: 20px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      max-width: 500px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+      opacity: 0;
+      transition: opacity 0.5s ease;
+    }
+    
+    .now-playing.visible {
+      opacity: 1;
+    }
+    
+    .album-cover {
+      width: 100px;
+      height: 100px;
+      border-radius: 12px;
+      background: #1a1a1a;
+      flex-shrink: 0;
+      overflow: hidden;
+    }
+    
+    .album-cover img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    
+    .track-info {
+      flex: 1;
+      min-width: 0;
+    }
+    
+    .track-name {
+      font-size: 20px;
+      font-weight: bold;
+      margin-bottom: 8px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    
+    .artist-name {
+      font-size: 16px;
+      opacity: 0.8;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    
+    .spotify-logo {
+      font-size: 12px;
+      opacity: 0.5;
+      margin-top: 8px;
+    }
+    
+    .not-playing {
+      text-align: center;
+      opacity: 0.5;
+      font-size: 18px;
+    }
+  </style>
+</head>
+<body>
+  <div class="now-playing" id="nowPlaying">
+    <div class="album-cover" id="albumCover">
+      <img src="" alt="Album Cover" id="coverImage">
+    </div>
+    <div class="track-info">
+      <div class="track-name" id="trackName">Kein Song aktiv</div>
+      <div class="artist-name" id="artistName">Starte Musik in Spotify</div>
+      <div class="spotify-logo">🎵 Spotify</div>
+    </div>
+  </div>
+  <script>
+    const API_URL = window.location.origin;
+    
+    // Get userId from URL parameter or use default
+    const urlParams = new URLSearchParams(window.location.search);
+    const userId = urlParams.get('user') || 'SD-A98DB'; // Default to first user
+    
+    const nowPlaying = document.getElementById('nowPlaying');
+    const coverImage = document.getElementById('coverImage');
+    const trackName = document.getElementById('trackName');
+    const artistName = document.getElementById('artistName');
+    
+    let lastTrack = null;
+    
+    async function updateNowPlaying() {
+      try {
+        const res = await fetch(`${API_URL}/api/spotify/current/public/${userId}`);
+        const data = await res.json();
+        
+        if (data.error || !data.name) {
+          nowPlaying.classList.remove('visible');
+          return;
+        }
+        
+        // Only update if track changed
+        if (lastTrack !== data.name) {
+          trackName.textContent = data.name;
+          artistName.textContent = data.artist;
+          coverImage.src = data.cover || '';
+          lastTrack = data.name;
+          
+          nowPlaying.classList.add('visible');
+        }
+      } catch (err) {
+        console.error('Error fetching track:', err);
+        nowPlaying.classList.remove('visible');
+      }
+    }
+    
+    // Update every 2 seconds
+    setInterval(updateNowPlaying, 2000);
+    updateNowPlaying();
+  </script>
+</body>
+</html>
