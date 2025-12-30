@@ -61,14 +61,36 @@
       margin-bottom: 10px;
     }
     
+    .countdown-message {
+      font-size: 48px;
+      color: #4CAF50;
+      font-weight: bold;
+      animation: pulse-green 1.5s ease-in-out infinite;
+    }
+    
+    .countdown-message.stop-pulse {
+      animation: none;
+      opacity: 1;
+    }
+    
     .countdown-skipped {
       font-size: 28px;
       color: #FF5722;
       font-weight: bold;
-      animation: pulse 1.5s ease-in-out infinite;
+      animation: pulse-red 1.5s ease-in-out infinite;
     }
     
-    @keyframes pulse {
+    .countdown-skipped.stop-pulse {
+      animation: none;
+      opacity: 1;
+    }
+    
+    @keyframes pulse-green {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    
+    @keyframes pulse-red {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.6; }
     }
@@ -85,6 +107,7 @@
       <div class="countdown-bar-fill" id="countdownBar"></div>
     </div>
     <div class="countdown-end" id="countdownEnd">Ungefähr um --:-- Uhr</div>
+    <div class="countdown-message hidden" id="countdownMessage">Stream Beginnt in Kürze</div>
     <div class="countdown-skipped hidden" id="countdownSkipped">Pause wurde übersprungen</div>
   </div>
 
@@ -94,22 +117,27 @@
     const timeEl = document.getElementById('countdownTime');
     const barEl = document.getElementById('countdownBar');
     const endEl = document.getElementById('countdownEnd');
+    const messageEl = document.getElementById('countdownMessage');
     const skippedEl = document.getElementById('countdownSkipped');
     
     const texts = {
       de: {
         around: 'Ungefähr um',
         clock: 'Uhr',
-        skipped: 'Pause wurde übersprungen'
+        skipped: 'Pause wurde übersprungen',
+        starting: 'Stream Beginnt in Kürze'
       },
       en: {
         around: 'Around',
         clock: "o'clock",
-        skipped: 'Break was skipped'
+        skipped: 'Break was skipped',
+        starting: 'Stream Starting Soon'
       }
     };
     
     let currentLang = 'de';
+    let messageShownAt = null;
+    let skippedShownAt = null;
     
     async function updateCountdown() {
       try {
@@ -123,6 +151,7 @@
           const mins = Math.floor(timer.remaining / 60);
           const secs = timer.remaining % 60;
           timeEl.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+          timeEl.style.display = 'block';
           
           // Progress bar
           const percent = (timer.remaining / timer.duration) * 100;
@@ -138,18 +167,53 @@
             endEl.textContent = '--:--';
           }
           
+          // Hide all messages
+          messageEl.classList.add('hidden');
           skippedEl.classList.add('hidden');
+          messageShownAt = null;
+          skippedShownAt = null;
         } else {
           // Timer stopped
-          timeEl.textContent = '00:00';
+          timeEl.style.display = 'none';
           barEl.style.width = '0%';
           endEl.textContent = '--:--';
           
           if (timer.wasSkipped) {
+            // Show "Pause wurde übersprungen"
             skippedEl.textContent = texts[currentLang].skipped;
             skippedEl.classList.remove('hidden');
+            messageEl.classList.add('hidden');
+            
+            // Start tracking time for pulse animation
+            if (skippedShownAt === null) {
+              skippedShownAt = Date.now();
+            }
+            
+            // Stop pulsing after 5 seconds
+            const elapsed = Date.now() - skippedShownAt;
+            if (elapsed > 5000) {
+              skippedEl.classList.add('stop-pulse');
+            } else {
+              skippedEl.classList.remove('stop-pulse');
+            }
           } else {
+            // Show "Stream Beginnt in Kürze"
+            messageEl.textContent = texts[currentLang].starting;
+            messageEl.classList.remove('hidden');
             skippedEl.classList.add('hidden');
+            
+            // Start tracking time for pulse animation
+            if (messageShownAt === null) {
+              messageShownAt = Date.now();
+            }
+            
+            // Stop pulsing after 5 seconds
+            const elapsed = Date.now() - messageShownAt;
+            if (elapsed > 5000) {
+              messageEl.classList.add('stop-pulse');
+            } else {
+              messageEl.classList.remove('stop-pulse');
+            }
           }
         }
       } catch (err) {
