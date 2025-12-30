@@ -3,14 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Pause Timer Display</title>
+  <title>Countdown</title>
   <style>
     @font-face {
-      font-family: 'CustomStreamFont';
+      font-family: 'StreamFont';
       src: url('/fonts/font.ttf') format('truetype');
-      font-weight: normal;
-      font-style: normal;
-      font-display: swap;
     }
     
     * {
@@ -21,129 +18,143 @@
     
     body {
       background: transparent;
-      font-family: 'CustomStreamFont', Arial, sans-serif;
+      font-family: 'StreamFont', Arial, sans-serif;
       color: white;
       display: flex;
       justify-content: center;
       align-items: center;
-      min-height: 100vh;
-      padding: 20px;
-    }
-    
-    .timer-container {
-      text-align: center;
-      width: 100%;
-      max-width: 600px;
-    }
-    
-    .countdown {
-      font-size: 72px;
-      font-weight: bold;
-      margin-bottom: 20px;
-      text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
-    }
-    
-    .progress-container {
-      width: 100%;
-      height: 30px;
-      background: rgba(255,255,255,0.2);
-      border-radius: 15px;
+      height: 100vh;
       overflow: hidden;
-      margin-bottom: 15px;
     }
     
-    .progress-bar {
+    .countdown-container {
+      text-align: center;
+      padding: 40px;
+    }
+    
+    .countdown-time {
+      font-size: 120px;
+      font-weight: bold;
+      text-shadow: 0 0 20px rgba(0, 0, 0, 0.8);
+      margin-bottom: 20px;
+    }
+    
+    .countdown-bar {
+      width: 600px;
+      height: 20px;
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 10px;
+      overflow: hidden;
+      margin: 0 auto 20px;
+    }
+    
+    .countdown-bar-fill {
       height: 100%;
       background: linear-gradient(90deg, #4CAF50, #8BC34A);
-      transition: width 0.3s ease;
-      border-radius: 15px;
+      transition: width 0.5s linear;
+      border-radius: 10px;
     }
     
-    .end-time {
+    .countdown-end {
       font-size: 24px;
       opacity: 0.8;
+      margin-bottom: 10px;
+    }
+    
+    .countdown-skipped {
+      font-size: 28px;
+      color: #FF5722;
+      font-weight: bold;
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+    
+    .hidden {
+      display: none !important;
     }
   </style>
 </head>
 <body>
-  <div class="timer-container">
-    <div class="countdown" id="countdown">Stream beginnt in Kürze</div>
-    <div class="progress-container">
-      <div class="progress-bar" id="progressBar"></div>
+  <div class="countdown-container">
+    <div class="countdown-time" id="countdownTime">00:00</div>
+    <div class="countdown-bar">
+      <div class="countdown-bar-fill" id="countdownBar"></div>
     </div>
-    <div class="end-time" id="endTime">Pause wurde übersprungen</div>
+    <div class="countdown-end" id="countdownEnd">Ungefähr um --:-- Uhr</div>
+    <div class="countdown-skipped hidden" id="countdownSkipped">Pause wurde übersprungen</div>
   </div>
+
   <script>
     const API_URL = window.location.origin;
     
-    const translations = {
+    const timeEl = document.getElementById('countdownTime');
+    const barEl = document.getElementById('countdownBar');
+    const endEl = document.getElementById('countdownEnd');
+    const skippedEl = document.getElementById('countdownSkipped');
+    
+    const texts = {
       de: {
-        starting: 'Stream beginnt in Kürze',
-        skipped: 'Pause wurde übersprungen',
-        endsAt: 'Ungefähr um'
+        around: 'Ungefähr um',
+        clock: 'Uhr',
+        skipped: 'Pause wurde übersprungen'
       },
       en: {
-        starting: 'Stream starting soon',
-        skipped: 'Break was skipped',
-        endsAt: 'Around'
+        around: 'Around',
+        clock: "o'clock",
+        skipped: 'Break was skipped'
       }
     };
     
-    let currentLanguage = 'de';
+    let currentLang = 'de';
     
-    function formatTime(seconds) {
-      const mins = Math.floor(seconds / 60);
-      const secs = seconds % 60;
-      return `${mins}:${secs.toString().padStart(2, '0')}`;
-    }
-    
-    function formatEndTime(timestamp) {
-      const date = new Date(timestamp);
-      const hours = date.getHours().toString().padStart(2, '0');
-      const mins = date.getMinutes().toString().padStart(2, '0');
-      return currentLanguage === 'de' ? `${hours}:${mins} Uhr` : `${hours}:${mins}`;
-    }
-    
-    async function updateDisplay() {
+    async function updateCountdown() {
       try {
-        const res = await fetch(`${API_URL}/api/state/public`);
-        const state = await res.json();
+        const res = await fetch(`${API_URL}/api/timer/public`);
+        const timer = await res.json();
         
-        currentLanguage = state.language || 'de';
-        const t = translations[currentLanguage];
+        currentLang = timer.language || 'de';
         
-        const countdown = document.getElementById('countdown');
-        const progressBar = document.getElementById('progressBar');
-        const endTime = document.getElementById('endTime');
-        
-        if (!state.isRunning || state.remaining <= 0) {
-          if (state.wasSkipped) {
-            countdown.textContent = t.starting;
-            progressBar.style.width = '0%';
-            endTime.textContent = t.skipped;
+        if (timer.isRunning && timer.remaining > 0) {
+          const mins = Math.floor(timer.remaining / 60);
+          const secs = timer.remaining % 60;
+          timeEl.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+          
+          const percent = (timer.remaining / timer.duration) * 100;
+          barEl.style.width = `${percent}%`;
+          
+          if (timer.endTime) {
+            const endDate = new Date(timer.endTime);
+            const hours = endDate.getHours().toString().padStart(2, '0');
+            const minutes = endDate.getMinutes().toString().padStart(2, '0');
+            endEl.textContent = `${texts[currentLang].around} ${hours}:${minutes} ${texts[currentLang].clock}`;
           } else {
-            countdown.textContent = t.starting;
-            progressBar.style.width = '0%';
-            endTime.textContent = '';
+            endEl.textContent = '--:--';
           }
+          
+          skippedEl.classList.add('hidden');
         } else {
-          // Use state.remaining directly from server (already calculated)
-          countdown.textContent = formatTime(state.remaining);
+          timeEl.textContent = '00:00';
+          barEl.style.width = '0%';
+          endEl.textContent = '--:--';
           
-          const progress = ((state.duration - state.remaining) / state.duration) * 100;
-          progressBar.style.width = `${Math.max(0, Math.min(100, progress))}%`;
-          
-          if (state.endTime) {
-            endTime.textContent = `${t.endsAt} ${formatEndTime(state.endTime)}`;
+          if (timer.wasSkipped) {
+            skippedEl.textContent = texts[currentLang].skipped;
+            skippedEl.classList.remove('hidden');
+          } else {
+            skippedEl.classList.add('hidden');
           }
         }
       } catch (err) {
-        console.error('Fehler beim Laden:', err);
+        console.error('Update countdown error:', err);
       }
     }
     
-    setInterval(updateDisplay, 100);
-    updateDisplay();
+    setInterval(updateCountdown, 100);
+    updateCountdown();
   </script>
 </body>
 </html>
