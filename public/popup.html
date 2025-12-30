@@ -84,33 +84,62 @@
     const noVideoElement = document.getElementById('noVideo');
     
     let currentVideoUrl = null;
+    let isPlaying = false;
     
-    async function checkCurrentVideo() {
+    async function checkPlayVideo() {
       try {
         const res = await fetch(`${API_URL}/api/popup/current`);
         const data = await res.json();
         
-        if (data.currentVideo && data.currentVideo !== currentVideoUrl) {
-          currentVideoUrl = data.currentVideo;
-          videoElement.src = `/pop/${data.currentVideo}`;
+        if (data.video && data.video !== currentVideoUrl) {
+          currentVideoUrl = data.video;
+          videoElement.src = `/pop/${data.video}`;
           videoElement.classList.add('active');
           noVideoElement.style.opacity = '0';
+          isPlaying = true;
+          
+          console.log('[POPUP] Playing video:', data.video);
           
           videoElement.onended = () => {
+            console.log('[POPUP] Video ended, notifying server...');
             videoElement.classList.remove('active');
+            isPlaying = false;
+            currentVideoUrl = null;
+            notifyVideoEnded();
           };
-        } else if (!data.currentVideo) {
+          
+          videoElement.onerror = () => {
+            console.error('[POPUP] Video load error:', data.video);
+            videoElement.classList.remove('active');
+            isPlaying = false;
+            currentVideoUrl = null;
+          };
+          
+        } else if (!data.video && isPlaying) {
           videoElement.classList.remove('active');
+          isPlaying = false;
           currentVideoUrl = null;
         }
       } catch (err) {
-        console.error('Error fetching video:', err);
+        console.error('[POPUP] Error fetching video:', err);
+      }
+    }
+    
+    async function notifyVideoEnded() {
+      try {
+        await fetch(`${API_URL}/api/popup/ended`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        console.log('[POPUP] Server notified of video end');
+      } catch (err) {
+        console.error('[POPUP] Error notifying server:', err);
       }
     }
     
     // Check every 2 seconds
-    setInterval(checkCurrentVideo, 2000);
-    checkCurrentVideo();
+    setInterval(checkPlayVideo, 2000);
+    checkPlayVideo();
   </script>
 </body>
 </html>
