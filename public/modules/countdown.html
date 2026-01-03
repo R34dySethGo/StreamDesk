@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Break Timer</title>
+  
+  <!-- ==========================================
+       MODULE CONFIGURATION
+       ========================================== -->
+  <script type="application/json" id="module-config">
+  {
+    "id": "timer",
+    "name": "Break Timer",
+    "priority": 5,
+    "borderColor": "#1a3a52",
+    "activeColor": "#00BCD4",
+    "hasControllerUI": true,
+    "hasOverlay": true,
+    "overlayUrl": "/modules/countdown.html",
+    "dependencies": []
+  }
+  </script>
+  
+  <!-- ==========================================
+       SERVER MODULE CODE
+       ========================================== -->
+  <script type="text/x-server-module">
+// Initialize timer state
+if (!moduleStates.timer) {
+  moduleStates.timer = {
+    duration: 0,
+    startTime: null,
+    pausedAt: null,
+    pausedRemaining: 0,
+    isRunning: false,
+    isPaused: false,
+    wasSkipped: false,
+    language: 'de',
+    musicConnected: false
+  };
+}
+
+const timerState = moduleStates.timer;
+
+// Helper functions
+function getTimerRemaining() {
+  if (!timerState.isRunning) {
+    return 0;
+  }
+  
+  if (timerState.isPaused) {
+    return timerState.pausedRemaining;
+  }
+  
+  const now = Date.now();
+  const elapsed = Math.floor((now - timerState.startTime) / 1000);
+  const remaining = Math.max(0, timerState.duration - elapsed);
+  
+  return remaining;
+}
+
+function getTimerEndTime() {
+  if (!timerState.isRunning || timerState.isPaused) {
+    return null;
+  }
+  
+  return timerState.startTime + (timerState.duration * 1000);
+}
+
+// Routes
+app.get('/api/timer', getUserFromSession, (req, res) => {
+  const remaining = getTimerRemaining();
+  const endTime = getTimerEndTime();
+  
+  res.json({
+    duration: timerState.duration,
+    remaining: remaining,
+    endTime: endTime,
+    isRunning: timerState.isRunning,
+    isPaused: timerState.isPaused,
+    wasSkipped: timerState.wasSkipped,
+    language: timerState.language,
+    musicConnected: timerState.musicConnected
+  });
+});
+
+app.get('/api/timer/public', (req, res) => {
+  const remaining = getTimerRemaining();
+  const endTime = getTimerEndTime();
+  
+  res.json({
+    duration: timerState.duration,
+    remaining: remaining,
+    endTime: endTime,
+    isRunning: timerState.isRunning,
+    isPaused: timerState.isPaused,
+    wasSkipped: timerState.wasSkipped,
+    language: timerState.language
+  });
+});
+
+app.post('/api/timer/start', getUserFromSession, (req, res) => {
+  const { minutes } = req.body;
+  
+  if (!minutes || minutes <= 0) {
+    return res.status(400).json({ error: 'Invalid minutes' });
+  }
+  
+  const seconds = minutes * 60;
+  
+  timerState.duration = seconds;
+  timerState.startTime = Date.now();
+  timerState.pausedAt = null;
+  timerState.pausedRemaining = 0;
+  timerState.isRunning = true;
+  timerState.isPaused = false;
+  timerState.wasSkipped = false;
+  
+  console.log(`[TIMER] Started: ${minutes} min (${seconds}s)`);
+  console.log(`[TIMER] End time: ${new Date(getTimerEndTime()).toISOString()}`);
+  
+  // If music connected, trigger fade UP
+  if (timerState.musicConnected) {
+    if (moduleStates.playlist && moduleStates.playlist.volume !== undefined) {
+      const currentVol = moduleStates.playlist.volume;
+      moduleStates.playlist.previousVolume = currentVol;
+      moduleStates.playlist.targetVolume = 75;
+      moduleStates.playlist.fadeStartTime = Date.now();
+      moduleStates.playlist.fadeDirection = 'up';
+      console.log(`[TIMER] Triggering Playlist fade UP: ${currentVol}% → 75%`);
+    }
+    
+    if (moduleStates.spotify && moduleStates.spotify.volume !== undefined) {
+      const currentVol = moduleStates.spotify.volume;
+      moduleStates.spotify.previousVolume = currentVol;
+      moduleStates.spotify.targetVolume = 75;
+      moduleStates.spotify.fadeStartTime = Date.now();
+      moduleStates.spotify.fadeDirection = 'up';
+      console.log(`[TIMER] Triggering Spotify fade UP: ${currentVol}% → 75%`);
+    }
+  }
+  
+  const remaining = getTimerRemaining();
+  const endTime = getTimerEndTime();
+  
+  res.json({
+    duration: timerState.duration,
+    remaining: remaining,
+    endTime: endTime,
+    isRunning: timerState.isRunning,
+    isPaused: timerState.isPaused,
+    wasSkipped: false
+  });
+});
+
+app.post('/api/timer/pause', getUserFromSession, (req, res) => {
+  if (!timerState.isRunning) {
+    return res.status(400).json({ error: 'Timer not running' });
+  }
+  
+  if (timerState.isPaused) {
+    return res.status(400).json({ error: 'Timer already paused' });
+  }
+  
+  timerState.pausedRemaining = getTimerRemaining();
+  timerState.pausedAt = Date.now();
+  timerState.isPaused = true;
+  
+  console.log(`[TIMER] Paused at ${timerState.pausedRemaining}s remaining`);
+  
+  res.json({
+    duration: timerState.duration,
+    remaining: timerState.pausedRemaining,
+    endTime: null,
+    isRunning: timerState.isRunning,
+    isPaused: timerState.isPaused,
+    wasSkipped: timerState.wasSkipped
+  });
+});
+
+app.post('/api/timer/resume', getUserFromSession, (req, res) => {
+  if (!timerState.isRunning) {
+    return res.status(400).json({ error: 'Timer not running' });
+  }
+  
+  if (!timerState.isPaused) {
+    return res.status(400).json({ error: 'Timer not paused' });
+  }
+  
+  timerState.duration = timerState.pausedRemaining;
+  timerState.startTime = Date.now();
+  timerState.pausedAt = null;
+  timerState.isPaused = false;
+  
+  console.log(`[TIMER] Resumed with ${timerState.duration}s remaining`);
+  console.log(`[TIMER] New end time: ${new Date(getTimerEndTime()).toISOString()}`);
+  
+  const remaining = getTimerRemaining();
+  const endTime = getTimerEndTime();
+  
+  res.json({
+    duration: timerState.duration,
+    remaining: remaining,
+    endTime: endTime,
+    isRunning: timerState.isRunning,
+    isPaused: timerState.isPaused,
+    wasSkipped: timerState.wasSkipped
+  });
+});
+
+app.post('/api/timer/reset', getUserFromSession, (req, res) => {
+  const wasRunning = timerState.isRunning && getTimerRemaining() > 0;
+  
+  timerState.duration = 0;
+  timerState.startTime = null;
+  timerState.pausedAt = null;
+  timerState.pausedRemaining = 0;
+  timerState.isRunning = false;
+  timerState.isPaused = false;
+  timerState.wasSkipped = wasRunning;
+  
+  console.log(`[TIMER] Reset. Was skipped: ${wasRunning}`);
+  
+  // Trigger fade DOWN to restore volume
+  if (timerState.musicConnected) {
+    if (moduleStates.playlist && moduleStates.playlist.previousVolume !== undefined) {
+      const targetVol = moduleStates.playlist.previousVolume;
+      moduleStates.playlist.targetVolume = targetVol;
+      moduleStates.playlist.fadeStartTime = Date.now();
+      moduleStates.playlist.fadeDirection = 'down';
+      console.log(`[TIMER] Triggering Playlist fade DOWN to ${targetVol}%`);
+    }
+    if (moduleStates.spotify && moduleStates.spotify.previousVolume !== undefined) {
+      const targetVol = moduleStates.spotify.previousVolume;
+      moduleStates.spotify.targetVolume = targetVol;
+      moduleStates.spotify.fadeStartTime = Date.now();
+      moduleStates.spotify.fadeDirection = 'down';
+      console.log(`[TIMER] Triggering Spotify fade DOWN to ${targetVol}%`);
+    }
+  }
+  
+  res.json({
+    duration: 0,
+    remaining: 0,
+    endTime: null,
+    isRunning: false,
+    isPaused: false,
+    wasSkipped: wasRunning,
+    language: timerState.language
+  });
+});
+
+app.post('/api/timer/language', getUserFromSession, (req, res) => {
+  const { language } = req.body;
+  
+  if (language !== 'de' && language !== 'en') {
+    return res.status(400).json({ error: 'Invalid language' });
+  }
+  
+  timerState.language = language;
+  console.log(`[TIMER] Language changed to: ${language}`);
+  
+  res.json({ language: timerState.language });
+});
+
+app.post('/api/timer/music-connect', getUserFromSession, (req, res) => {
+  const { connected } = req.body;
+  timerState.musicConnected = connected;
+  console.log(`[TIMER] Music connection: ${connected ? 'ON' : 'OFF'}`);
+  res.json({ musicConnected: timerState.musicConnected });
+});
+  </script>
+  
+  <!-- ==========================================
+       CONTROLLER MODULE CODE
+       ========================================== -->
+  <script type="text/x-controller-module">
+let timerInterval = null;
+let isUpdating = false;
+let musicModuleAvailable = false;
+
+// Check if any music module exists
+async function checkMusicModule() {
+  try {
+    const res = await fetch(`${apiUrl}/api/modules/list`);
+    const data = await res.json();
+    musicModuleAvailable = data.modules.some(m => 
+      m.musicModule === true && m.hasControllerUI !== false
+    );
+    updateUI();
+  } catch (err) {
+    console.error('[TIMER] Error checking music modules:', err);
+  }
+}
+
+function updateUI() {
+  const musicCheckbox = document.getElementById('timer-music-checkbox');
+  const musicConnect = document.querySelector('.timer-music-connect');
+  
+  if (!musicModuleAvailable && musicConnect) {
+    musicConnect.style.display = 'none';
+  } else if (musicConnect) {
+    musicConnect.style.display = 'flex';
+    
+    if (musicCheckbox) {
+      musicCheckbox.disabled = false;
+    }
+  }
+}
+
+// Render UI
+container.innerHTML = `
+  <style>
+    .timer-preview {
+      background: #1a1a1a;
+      padding: 15px;
+      border-radius: 10px;
+      margin-bottom: 20px;
+      text-align: center;
+    }
+    
+    .timer-preview-time {
+      font-size: 28px;
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+    
+    .timer-preview-end {
+      font-size: 14px;
+      opacity: 0.7;
+    }
+    
+    .timer-input-group {
+      margin-bottom: 15px;
+    }
+    
+    .timer-input-group label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 13px;
+      opacity: 0.8;
+    }
+    
+    .timer-input-group input {
+      width: 100%;
+      padding: 10px;
+      background: #1a1a1a;
+      border: 2px solid #3a3a3a;
+      border-radius: 8px;
+      color: white;
+      font-size: 15px;
+      transition: border-color 0.3s;
+    }
+    
+    .timer-input-group input:focus {
+      outline: none;
+      border-color: #00BCD4;
+    }
+    
+    .timer-music-connect {
+      margin-bottom: 15px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      background: #1a1a1a;
+      border-radius: 8px;
+      width: 50%;
+      margin-left: auto;
+    }
+    
+    .timer-music-connect input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+      accent-color: #00BCD4;
+    }
+    
+    .timer-music-connect label {
+      font-size: 12px;
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+    }
+    
+    .timer-button-group {
+      display: flex;
+      gap: 8px;
+      margin-top: 15px;
+    }
+    
+    .timer-button-group button {
+      flex: 1;
+      padding: 12px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    
+    .timer-btn-start {
+      background: #4CAF50;
+      color: white;
+    }
+    
+    .timer-btn-start:hover {
+      background: #45a049;
+    }
+    
+    .timer-btn-pause {
+      background: #FF9800;
+      color: white;
+    }
+    
+    .timer-btn-pause:hover {
+      background: #e68900;
+    }
+    
+    .timer-btn-reset {
+      background: #f44336;
+      color: white;
+    }
+    
+    .timer-btn-reset:hover {
+      background: #da190b;
+    }
+    
+    .hidden {
+      display: none !important;
+    }
+  </style>
+  
+  <div class="timer-preview">
+    <div class="timer-preview-time" id="timer-preview-time">00:00</div>
+    <div class="timer-preview-end" id="timer-preview-end">Resume: --:-- </div>
+  </div>
+  
+  <div class="timer-input-group">
+    <label for="timer-time-input">Time in minutes:</label>
+    <input type="number" id="timer-time-input" min="1" placeholder="e.g. 5" value="5">
+  </div>
+  
+  <div class="timer-music-connect">
+    <input type="checkbox" id="timer-music-checkbox">
+    <label for="timer-music-checkbox">🎵 Music</label>
+  </div>
+  
+  <div class="timer-button-group">
+    <button class="timer-btn-start" id="timer-start-btn">▶️ Start</button>
+    <button class="timer-btn-pause hidden" id="timer-pause-btn">⏸️ Pause</button>
+    <button class="timer-btn-reset hidden" id="timer-reset-btn">⏹️ Reset</button>
+  </div>
+`;
+
+// Get elements
+const previewTime = document.getElementById('timer-preview-time');
+const previewEnd = document.getElementById('timer-preview-end');
+const timeInput = document.getElementById('timer-time-input');
+const startBtn = document.getElementById('timer-start-btn');
+const pauseBtn = document.getElementById('timer-pause-btn');
+const resetBtn = document.getElementById('timer-reset-btn');
+const musicCheckbox = document.getElementById('timer-music-checkbox');
+
+// Update UI function
+async function updateTimerUI() {
+  if (isUpdating) return;
+  
+  try {
+    const res = await fetch(`${apiUrl}/api/timer`, { headers: getHeaders() });
+    const timer = await res.json();
+    
+    if (timer.isRunning && timer.remaining > 0) {
+      const mins = Math.floor(timer.remaining / 60);
+      const secs = timer.remaining % 60;
+      previewTime.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+      
+      if (timer.endTime && !timer.isPaused) {
+        const endDate = new Date(timer.endTime);
+        const hours = endDate.getHours().toString().padStart(2, '0');
+        const minutes = endDate.getMinutes().toString().padStart(2, '0');
+        previewEnd.textContent = `Resume: ${hours}:${minutes}`;
+      } else {
+        previewEnd.textContent = 'Paused';
+      }
+      
+      panel.style.borderColor = moduleConfig.activeColor;
+      startBtn.classList.add('hidden');
+      pauseBtn.classList.remove('hidden');
+      resetBtn.classList.remove('hidden');
+      
+      if (timer.isPaused) {
+        pauseBtn.textContent = '▶️ Resume';
+      } else {
+        pauseBtn.textContent = '⏸️ Pause';
+      }
+    } else {
+      previewTime.textContent = '00:00';
+      previewEnd.textContent = 'Resume: --:--';
+      panel.style.borderColor = moduleConfig.borderColor;
+      startBtn.classList.remove('hidden');
+      pauseBtn.classList.add('hidden');
+      resetBtn.classList.add('hidden');
+      
+      // Auto-restore on natural expiration
+      if (timer.musicConnected && !timer.isRunning && timer.remaining === 0) {
+        try {
+          await fetch(`${apiUrl}/api/timer/reset`, {
+            method: 'POST',
+            headers: getHeaders()
+          });
+          console.log('[TIMER] Auto-triggered fade DOWN');
+        } catch (err) {
+          console.error('[TIMER] Auto-restore error:', err);
+        }
+      }
+    }
+    
+    musicCheckbox.checked = timer.musicConnected || false;
+  } catch (err) {
+    console.error('[TIMER] Update error:', err);
+  }
+}
+
+// Event listeners
+startBtn.addEventListener('click', async () => {
+  isUpdating = true;
+  const minutes = parseInt(timeInput.value) || 5;
+  
+  try {
+    await fetch(`${apiUrl}/api/timer/start`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ minutes })
+    });
+    
+    await updateTimerUI();
+  } catch (err) {
+    console.error('[TIMER] Start error:', err);
+  } finally {
+    isUpdating = false;
+  }
+});
+
+pauseBtn.addEventListener('click', async () => {
+  isUpdating = true;
+  
+  try {
+    const res = await fetch(`${apiUrl}/api/timer`, { headers: getHeaders() });
+    const currentState = await res.json();
+    
+    const endpoint = currentState.isPaused ? '/api/timer/resume' : '/api/timer/pause';
+    
+    await fetch(`${apiUrl}${endpoint}`, {
+      method: 'POST',
+      headers: getHeaders()
+    });
+    
+    await updateTimerUI();
+  } catch (err) {
+    console.error('[TIMER] Pause/Resume error:', err);
+  } finally {
+    isUpdating = false;
+  }
+});
+
+resetBtn.addEventListener('click', async () => {
+  isUpdating = true;
+  
+  try {
+    await fetch(`${apiUrl}/api/timer/reset`, {
+      method: 'POST',
+      headers: getHeaders()
+    });
+    
+    await updateTimerUI();
+  } catch (err) {
+    console.error('[TIMER] Reset error:', err);
+  } finally {
+    isUpdating = false;
+  }
+});
+
+musicCheckbox.addEventListener('change', async (e) => {
+  try {
+    await fetch(`${apiUrl}/api/timer/music-connect`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ connected: e.target.checked })
+    });
+  } catch (err) {
+    console.error('[TIMER] Music connect error:', err);
+  }
+});
+
+// Initialize
+timerInterval = setInterval(updateTimerUI, 1000);
+updateTimerUI();
+checkMusicModule();
+
+// Return module instance
+return {
+  destroy: function() {
+    if (timerInterval) {
+      clearInterval(timerInterval);
+    }
+  }
+};
+  </script>
+  
+  <!-- ==========================================
+       OBS OVERLAY STYLES
+       ========================================== -->
+  <style>
+    @font-face {
+      font-family: 'StreamFont';
+      src: url('/fonts/font.ttf') format('truetype');
+    }
+    
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      background: transparent;
+      font-family: 'StreamFont', Arial, sans-serif;
+      color: white;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      overflow: hidden;
+    }
+    
+    .countdown-container {
+      text-align: center;
+      padding: 40px;
+    }
+    
+    .countdown-time {
+      font-size: 120px;
+      font-weight: bold;
+      text-shadow: 0 0 20px rgba(0, 0, 0, 0.8);
+      margin-bottom: 20px;
+    }
+    
+    .countdown-bar {
+      width: 600px;
+      height: 20px;
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 10px;
+      overflow: hidden;
+      margin: 0 auto 20px;
+    }
+    
+    .countdown-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #00BCD4, #00E5FF);
+      transition: width 0.5s linear;
+      border-radius: 10px;
+    }
+    
+    .countdown-end {
+      font-size: 24px;
+      opacity: 0.8;
+    }
+    
+    .countdown-message {
+      font-size: 72px;
+      color: white;
+      font-weight: bold;
+      text-shadow: 0 0 20px rgba(0, 0, 0, 0.8);
+      margin-bottom: 20px;
+      animation: pulse-white 1.5s ease-in-out infinite;
+    }
+    
+    .countdown-message.stop-pulse {
+      animation: none;
+      opacity: 1;
+    }
+    
+    .countdown-skipped {
+      font-size: 24px;
+      color: #FF5722;
+      font-weight: bold;
+      -webkit-text-stroke: 2px white;
+      text-stroke: 2px white;
+      paint-order: stroke fill;
+      animation: pulse-red 1.5s ease-in-out infinite;
+    }
+    
+    .countdown-skipped.stop-pulse {
+      animation: none;
+      opacity: 1;
+    }
+    
+    @keyframes pulse-white {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    
+    @keyframes pulse-red {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+    
+    .hidden {
+      display: none !important;
+    }
+  </style>
+</head>
+<body>
+  <div class="countdown-container">
+    <div class="countdown-time" id="countdownTime">00:00</div>
+    <div class="countdown-message hidden" id="countdownMessage">Stream continues shortly</div>
+    <div class="countdown-bar">
+      <div class="countdown-bar-fill" id="countdownBar"></div>
+    </div>
+    <div class="countdown-end" id="countdownEnd">Around --:--</div>
+    <div class="countdown-skipped hidden" id="countdownSkipped">Break was skipped</div>
+  </div>
+
+  <script>
+    const API_URL = window.location.origin;
+    
+    const timeEl = document.getElementById('countdownTime');
+    const barEl = document.getElementById('countdownBar');
+    const endEl = document.getElementById('countdownEnd');
+    const messageEl = document.getElementById('countdownMessage');
+    const skippedEl = document.getElementById('countdownSkipped');
+    
+    const texts = {
+      de: {
+        around: 'Ungefähr um',
+        clock: 'Uhr',
+        skipped: 'Pause wurde übersprungen',
+        starting: 'Stream setzt gleich fort'
+      },
+      en: {
+        around: 'Around',
+        clock: "",
+        skipped: 'Break was skipped',
+        starting: 'Stream continues shortly'
+      }
+    };
+    
+    let currentLang = 'en';
+    let messageShownAt = null;
+    let skippedShownAt = null;
+    
+    async function updateCountdown() {
+      try {
+        const res = await fetch(`${API_URL}/api/timer/public`);
+        const timer = await res.json();
+        
+        currentLang = timer.language || 'en';
+        
+        if (timer.isRunning && timer.remaining > 0) {
+          const mins = Math.floor(timer.remaining / 60);
+          const secs = timer.remaining % 60;
+          timeEl.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+          timeEl.classList.remove('hidden');
+          
+          const percent = (timer.remaining / timer.duration) * 100;
+          barEl.style.width = `${percent}%`;
+          
+          if (timer.endTime) {
+            const endDate = new Date(timer.endTime);
+            const hours = endDate.getHours().toString().padStart(2, '0');
+            const minutes = endDate.getMinutes().toString().padStart(2, '0');
+            endEl.textContent = `${texts[currentLang].around} ${hours}:${minutes} ${texts[currentLang].clock}`;
+            endEl.classList.remove('hidden');
+          } else {
+            endEl.classList.add('hidden');
+          }
+          
+          messageEl.classList.add('hidden');
+          skippedEl.classList.add('hidden');
+          messageShownAt = null;
+          skippedShownAt = null;
+        } else {
+          timeEl.classList.add('hidden');
+          barEl.style.width = '0%';
+          
+          if (timer.wasSkipped) {
+            messageEl.textContent = texts[currentLang].starting;
+            messageEl.classList.remove('hidden');
+            
+            if (messageShownAt === null) {
+              messageShownAt = Date.now();
+            }
+            
+            const messageElapsed = Date.now() - messageShownAt;
+            if (messageElapsed > 5000) {
+              messageEl.classList.add('stop-pulse');
+            } else {
+              messageEl.classList.remove('stop-pulse');
+            }
+            
+            skippedEl.textContent = texts[currentLang].skipped;
+            skippedEl.classList.remove('hidden');
+            endEl.classList.add('hidden');
+            
+            if (skippedShownAt === null) {
+              skippedShownAt = Date.now();
+            }
+            
+            const skippedElapsed = Date.now() - skippedShownAt;
+            if (skippedElapsed > 5000) {
+              skippedEl.classList.add('stop-pulse');
+            } else {
+              skippedEl.classList.remove('stop-pulse');
+            }
+          } else {
+            messageEl.textContent = texts[currentLang].starting;
+            messageEl.classList.remove('hidden');
+            
+            if (messageShownAt === null) {
+              messageShownAt = Date.now();
+            }
+            
+            const messageElapsed = Date.now() - messageShownAt;
+            if (messageElapsed > 5000) {
+              messageEl.classList.add('stop-pulse');
+            } else {
+              messageEl.classList.remove('stop-pulse');
+            }
+            
+            skippedEl.classList.add('hidden');
+            endEl.classList.add('hidden');
+          }
+        }
+      } catch (err) {
+        console.error('[COUNTDOWN] Update error:', err);
+      }
+    }
+    
+    setInterval(updateCountdown, 100);
+    updateCountdown();
+  </script>
+</body>
+</html>
