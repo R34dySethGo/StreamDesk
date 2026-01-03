@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pop-Up Display</title>
+  
+  <!-- ==========================================
+       MODULE CONFIGURATION
+       ========================================== -->
+  <script type="application/json" id="module-config">
+  {
+    "id": "popup",
+    "name": "Pop-Up",
+    "priority": 7,
+    "borderColor": "#4a1a5c",
+    "activeColor": "#E91E63",
+    "hasControllerUI": true,
+    "hasOverlay": true,
+    "overlayUrl": "/modules/popup.html",
+    "dependencies": []
+  }
+  </script>
+  
+  <!-- ==========================================
+       SERVER MODULE CODE
+       ========================================== -->
+  <script type="text/x-server-module">
+// Initialize popup state
+if (!moduleStates.popup) {
+  moduleStates.popup = {
+    state: {
+      isActive: false,
+      selectedVideos: []
+    },
+    playlist: {
+      currentIndex: 0,
+      lastPlayedAt: null,
+      isWaiting: false,
+      waitMinutes: 10
+    }
+  };
+}
+
+const popupState = moduleStates.popup.state;
+const popupPlaylist = moduleStates.popup.playlist;
+
+// Routes
+app.get('/api/popup/videos', getUserFromSession, (req, res) => {
+  const popDir = path.join(__dirname, 'public', 'pop');
+  
+  if (!fs.existsSync(popDir)) {
+    return res.json({ videos: [] });
+  }
+  
+  const videos = fs.readdirSync(popDir)
+    .filter(f => f.endsWith('.mp4'))
+    .sort();
+  
+  res.json({ videos });
+});
+
+app.get('/api/popup/state', getUserFromSession, (req, res) => {
+  res.json(popupState);
+});
+
+app.post('/api/popup/state', getUserFromSession, (req, res) => {
+  const { isActive, selectedVideos } = req.body;
+  
+  if (typeof isActive !== 'undefined') {
+    const wasInactive = !popupState.isActive;
+    popupState.isActive = isActive;
+    
+    if (isActive && wasInactive) {
+      popupPlaylist.currentIndex = 0;
+      popupPlaylist.lastPlayedAt = null;
+      popupPlaylist.isWaiting = false;
+      console.log('[POPUP] Activated - first video will play immediately');
+    }
+  }
+  
+  if (Array.isArray(selectedVideos)) {
+    popupState.selectedVideos = selectedVideos;
+  }
+  
+  console.log('[POPUP] State updated:', popupState);
+  console.log('[POPUP] Playlist:', popupPlaylist);
+  res.json(popupState);
+});
+
+app.get('/api/popup/current', (req, res) => {
+  if (!popupState.isActive || popupState.selectedVideos.length === 0) {
+    return res.json({ video: null });
+  }
+  
+  const now = Date.now();
+  
+  if (popupPlaylist.isWaiting && popupPlaylist.lastPlayedAt) {
+    const elapsed = Math.floor((now - popupPlaylist.lastPlayedAt) / 1000 / 60);
+    const waitTime = popupPlaylist.waitMinutes;
+    
+    if (elapsed < waitTime) {
+      console.log(`[POPUP] Waiting... ${elapsed}/${waitTime} min`);
+      return res.json({ video: null });
+    }
+    
+    popupPlaylist.isWaiting = false;
+    console.log('[POPUP] Cooldown finished');
+  }
+  
+  const video = popupState.selectedVideos[popupPlaylist.currentIndex];
+  
+  if (!video) {
+    console.error('[POPUP] No video at index', popupPlaylist.currentIndex);
+    return res.json({ video: null });
+  }
+  
+  console.log(`[POPUP] Serving video ${popupPlaylist.currentIndex + 1}/${popupState.selectedVideos.length}: ${video}`);
+  res.json({ video });
+});
+
+app.post('/api/popup/ended', (req, res) => {
+  console.log('[POPUP] Video ended notification received');
+  
+  popupPlaylist.currentIndex = (popupPlaylist.currentIndex + 1) % popupState.selectedVideos.length;
+  popupPlaylist.lastPlayedAt = Date.now();
+  popupPlaylist.isWaiting = true;
+  
+  console.log(`[POPUP] Next index: ${popupPlaylist.currentIndex}, waiting ${popupPlaylist.waitMinutes} min`);
+  
+  res.json({ success: true });
+});
+  </script>
+  
+  <!-- ==========================================
+       CONTROLLER MODULE CODE
+       ========================================== -->
+  <script type="text/x-controller-module">
+let popupInterval = null;
+let isUpdating = false;
+let availableVideos = [];
+let selectedVideos = [];
+let popupActive = false;
+
+// Render UI
+container.innerHTML = `
+  <style>
+    .popup-toggle-container {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      margin-bottom: 11px;
+    }
+    
+    .popup-toggle-switch {
+      position: relative;
+      width: 50px;
+      height: 24px;
+      background: #f44336;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: background-color 0.3s ease;
+    }
+    
+    .popup-toggle-switch.active {
+      background: #4CAF50;
+    }
+    
+    .popup-toggle-circle {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 20px;
+      height: 20px;
+      background: white;
+      border-radius: 50%;
+      transition: left 0.3s ease;
+    }
+    
+    .popup-toggle-switch.active .popup-toggle-circle {
+      left: 28px;
+    }
+    
+    .popup-video-list {
+      max-height: 200px;
+      overflow-y: auto;
+      background: #1a1a1a;
+      border-radius: 8px;
+      padding: 10px;
+    }
+    
+    .popup-video-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px;
+      margin-bottom: 6px;
+      background: #2a2a2a;
+      border-radius: 6px;
+      transition: background 0.2s;
+    }
+    
+    .popup-video-item:hover {
+      background: #3a3a3a;
+    }
+    
+    .popup-video-item:last-child {
+      margin-bottom: 0;
+    }
+    
+    .popup-video-checkbox {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+      accent-color: #9C27B0;
+    }
+    
+    .popup-video-name {
+      font-size: 13px;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    
+    .popup-no-videos {
+      text-align: center;
+      opacity: 0.5;
+      font-size: 13px;
+      padding: 20px;
+    }
+  </style>
+  
+  <div class="popup-toggle-container">
+    <div class="popup-toggle-switch" id="popup-toggle">
+      <div class="popup-toggle-circle"></div>
+    </div>
+  </div>
+  
+  <div class="popup-video-list" id="popup-video-list">
+    <div class="popup-no-videos">Loading videos...</div>
+  </div>
+`;
+
+const toggle = document.getElementById('popup-toggle');
+const videoList = document.getElementById('popup-video-list');
+
+// Load videos
+async function loadVideos() {
+  try {
+    const res = await fetch(`${apiUrl}/api/popup/videos`, { headers: getHeaders() });
+    const data = await res.json();
+    availableVideos = data.videos || [];
+    renderVideoList();
+  } catch (err) {
+    console.error('[POPUP] Load videos error:', err);
+  }
+}
+
+// Render video list
+function renderVideoList() {
+  if (availableVideos.length === 0) {
+    videoList.innerHTML = '<div class="popup-no-videos">No videos available</div>';
+    return;
+  }
+  
+  videoList.innerHTML = '';
+  availableVideos.forEach(video => {
+    const item = document.createElement('div');
+    item.className = 'popup-video-item';
+    
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'popup-video-checkbox';
+    checkbox.checked = selectedVideos.includes(video);
+    checkbox.addEventListener('change', (e) => {
+      if (e.target.checked) {
+        selectedVideos.push(video);
+      } else {
+        selectedVideos = selectedVideos.filter(v => v !== video);
+      }
+      updatePopupVideos();
+    });
+    
+    const name = document.createElement('span');
+    name.className = 'popup-video-name';
+    name.textContent = video;
+    
+    item.appendChild(checkbox);
+    item.appendChild(name);
+    videoList.appendChild(item);
+  });
+}
+
+// Load popup state
+async function loadPopupState() {
+  if (isUpdating) return;
+  
+  try {
+    const res = await fetch(`${apiUrl}/api/popup/state`, { headers: getHeaders() });
+    const data = await res.json();
+    
+    popupActive = data.isActive || false;
+    selectedVideos = data.selectedVideos || [];
+    
+    if (popupActive) {
+      toggle.classList.add('active');
+      panel.style.borderColor = moduleConfig.activeColor;
+    } else {
+      toggle.classList.remove('active');
+      panel.style.borderColor = moduleConfig.borderColor;
+    }
+    
+    renderVideoList();
+  } catch (err) {
+    console.error('[POPUP] Load state error:', err);
+  }
+}
+
+// Update popup videos
+async function updatePopupVideos() {
+  if (isUpdating) return;
+  isUpdating = true;
+  
+  try {
+    await fetch(`${apiUrl}/api/popup/state`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ 
+        isActive: popupActive,
+        selectedVideos: selectedVideos
+      })
+    });
+  } catch (err) {
+    console.error('[POPUP] Update videos error:', err);
+  } finally {
+    isUpdating = false;
+  }
+}
+
+// Toggle event
+toggle.addEventListener('click', async () => {
+  isUpdating = true;
+  popupActive = !popupActive;
+  
+  if (popupActive) {
+    toggle.classList.add('active');
+    panel.style.borderColor = moduleConfig.activeColor;
+  } else {
+    toggle.classList.remove('active');
+    panel.style.borderColor = moduleConfig.borderColor;
+  }
+  
+  try {
+    await fetch(`${apiUrl}/api/popup/state`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ 
+        isActive: popupActive,
+        selectedVideos: selectedVideos
+      })
+    });
+  } catch (err) {
+    console.error('[POPUP] Toggle error:', err);
+  } finally {
+    isUpdating = false;
+  }
+});
+
+// Initialize
+loadVideos();
+loadPopupState();
+popupInterval = setInterval(loadPopupState, 3000);
+
+// Return module instance
+return {
+  destroy: function() {
+    if (popupInterval) {
+      clearInterval(popupInterval);
+    }
+  }
+};
+  </script>
+  
+  <!-- ==========================================
+       OBS OVERLAY STYLES
+       ========================================== -->
+  <style>
+    @font-face {
+      font-family: 'CustomStreamFont';
+      src: url('/fonts/font.ttf') format('truetype');
+      font-weight: normal;
+      font-style: normal;
+      font-display: swap;
+    }
+    
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      background: transparent;
+      font-family: 'CustomStreamFont', Arial, sans-serif;
+      color: white;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+    
+    .video-container {
+      position: relative;
+      width: 100%;
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: transparent;
+    }
+    
+    video {
+      max-width: 90%;
+      max-height: 90vh;
+      object-fit: contain;
+    }
+  </style>
+</head>
+<body>
+  <!-- ==========================================
+       OBS OVERLAY HTML
+       ========================================== -->
+  <div class="video-container">
+    <video id="popupVideo" autoplay muted style="display: none;"></video>
+  </div>
+  
+  <!-- ==========================================
+       OBS OVERLAY SCRIPT
+       ========================================== -->
+  <script>
+    const API_URL = window.location.origin;
+    const videoElement = document.getElementById('popupVideo');
+    
+    let currentVideoUrl = null;
+    
+    async function checkCurrentVideo() {
+      try {
+        const res = await fetch(`${API_URL}/api/popup/current`);
+        const data = await res.json();
+        
+        if (data.video && data.video !== currentVideoUrl) {
+          currentVideoUrl = data.video;
+          videoElement.src = `/pop/${data.video}`;
+          videoElement.style.display = 'block';
+          
+          videoElement.onended = async () => {
+            videoElement.style.display = 'none';
+            currentVideoUrl = null;
+            
+            try {
+              await fetch(`${API_URL}/api/popup/ended`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+              });
+            } catch (err) {
+              console.error('[POPUP] Error notifying server:', err);
+            }
+          };
+        } else if (!data.video && currentVideoUrl) {
+          videoElement.style.display = 'none';
+          currentVideoUrl = null;
+        }
+      } catch (err) {
+        console.error('[POPUP] Error fetching video:', err);
+      }
+    }
+    
+    setInterval(checkCurrentVideo, 2000);
+    checkCurrentVideo();
+  </script>
+</body>
+</html>
