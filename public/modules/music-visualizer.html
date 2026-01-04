@@ -43,21 +43,17 @@
     }
     
     .now-playing {
-      background: rgba(26, 26, 26, 0.95);
-      border-radius: 25px;
-      display: flex;
-      align-items: center;
-      gap: 35px;
-      min-width: 600px;
-      max-width: 1200px;
-      box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
       position: relative;
       transform: translateX(-150%);
       opacity: 0;
       transition: none;
+      min-width: 600px;
+      max-width: 1200px;
+      box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
       
-      /* Rainbow border - ANIMATED */
-      padding: 5px;
+      /* Rainbow border - ANIMATED (wie User Profile) */
+      padding: 3px;
+      border-radius: 25px;
       background: linear-gradient(
         90deg,
         #ff0000, #ff7f00, #ffff00, #00ff00, #0000ff, #4b0082, #9400d3,
@@ -73,8 +69,8 @@
     }
     
     .now-playing-inner {
-      background: rgba(26, 26, 26, 0.95);
-      border-radius: 20px;
+      background: rgba(42, 42, 42, 0.95);
+      border-radius: 22px;
       padding: 30px;
       display: flex;
       align-items: center;
@@ -84,12 +80,12 @@
     
     /* Slide in from left */
     .now-playing.slide-in {
-      animation: slideInFromLeft 1s ease-out forwards;
+      animation: slideInFromLeft 1s ease-out forwards, rainbow-flow 15s linear infinite;
     }
     
     /* Slide out to LEFT (back where it came from) */
     .now-playing.slide-out {
-      animation: slideOutToLeft 1s ease-in forwards;
+      animation: slideOutToLeft 1s ease-in forwards, rainbow-flow 15s linear infinite;
     }
     
     @keyframes slideInFromLeft {
