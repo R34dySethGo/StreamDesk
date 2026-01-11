@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Text Rotator Display</title>
+  
+  <!-- ==========================================
+       MODULE CONFIGURATION
+       ========================================== -->
+  <script type="application/json" id="module-config">
+  {
+    "id": "text-rotator",
+    "name": "Text Rotator",
+    "priority": 8,
+    "borderColor": "#8B7500",
+    "activeColor": "#FFD700",
+    "hasControllerUI": true,
+    "hasOverlay": true,
+    "overlayUrl": "/modules/text-rotator.html",
+    "dependencies": []
+  }
+  </script>
+  
+  <!-- ==========================================
+       SERVER MODULE CODE
+       ========================================== -->
+  <script type="text/x-server-module">
+// Initialize text rotator state
+if (!moduleStates.textRotator) {
+  moduleStates.textRotator = {
+    state: {
+      isActive: false,
+      texts: ["DAUERWERBESENDUNG"],
+      intervalSeconds: 10
+    }
+  };
+}
+
+const textRotatorState = moduleStates.textRotator.state;
+
+// Routes
+app.get('/api/text-rotator/state', getUserFromSession, (req, res) => {
+  res.json(textRotatorState);
+});
+
+app.post('/api/text-rotator/state', getUserFromSession, (req, res) => {
+  const { isActive, texts, intervalSeconds } = req.body;
+  
+  if (typeof isActive !== 'undefined') {
+    textRotatorState.isActive = isActive;
+  }
+  
+  if (Array.isArray(texts)) {
+    textRotatorState.texts = texts.filter(t => t && t.trim().length > 0);
+    if (textRotatorState.texts.length === 0) {
+      textRotatorState.texts = ["DAUERWERBESENDUNG"];
+    }
+  }
+  
+  if (typeof intervalSeconds !== 'undefined') {
+    textRotatorState.intervalSeconds = Math.max(1, intervalSeconds);
+  }
+  
+  console.log('[TEXT-ROTATOR] State updated:', textRotatorState);
+  res.json(textRotatorState);
+});
+
+app.get('/api/text-rotator/public', (req, res) => {
+  res.json({
+    isActive: textRotatorState.isActive,
+    texts: textRotatorState.texts,
+    intervalSeconds: textRotatorState.intervalSeconds
+  });
+});
+  </script>
+  
+  <!-- ==========================================
+       CONTROLLER MODULE CODE
+       ========================================== -->
+  <script type="text/x-controller-module">
+let rotatorInterval = null;
+let isUpdating = false;
+let texts = ["DAUERWERBESENDUNG"];
+let intervalSeconds = 10;
+let rotatorActive = false;
+
+// Render UI
+container.innerHTML = `
+  <style>
+    .rotator-toggle-container {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      margin-bottom: 11px;
+    }
+    
+    .rotator-toggle-switch {
+      position: relative;
+      width: 50px;
+      height: 24px;
+      background: #f44336;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: background-color 0.3s ease;
+    }
+    
+    .rotator-toggle-switch.active {
+      background: #4CAF50;
+    }
+    
+    .rotator-toggle-circle {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 20px;
+      height: 20px;
+      background: white;
+      border-radius: 50%;
+      transition: left 0.3s ease;
+    }
+    
+    .rotator-toggle-switch.active .rotator-toggle-circle {
+      left: 28px;
+    }
+    
+    .rotator-texts-container {
+      max-height: 250px;
+      overflow-y: auto;
+      margin-bottom: 15px;
+    }
+    
+    .rotator-text-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    
+    .rotator-text-input {
+      flex: 1;
+      background: #2a2a2a;
+      border: 1px solid #444;
+      border-radius: 6px;
+      padding: 8px 10px;
+      color: white;
+      font-size: 13px;
+      font-family: inherit;
+    }
+    
+    .rotator-text-input:focus {
+      outline: none;
+      border-color: #FFD700;
+    }
+    
+    .rotator-btn {
+      width: 32px;
+      height: 32px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      transition: opacity 0.2s;
+      background: transparent;
+    }
+    
+    .rotator-btn:hover {
+      opacity: 0.8;
+    }
+    
+    .rotator-btn-delete {
+      color: #f44336;
+    }
+    
+    .rotator-btn-add {
+      width: 100%;
+      height: 36px;
+      margin-top: 8px;
+      background: #4CAF50;
+      color: white;
+      font-weight: bold;
+      font-size: 24px;
+    }
+    
+    .rotator-interval-container {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding-top: 10px;
+      border-top: 1px solid #333;
+    }
+    
+    .rotator-slider {
+      flex: 1;
+      height: 6px;
+      border-radius: 3px;
+      background: #444;
+      outline: none;
+      -webkit-appearance: none;
+    }
+    
+    .rotator-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #FFD700;
+      cursor: pointer;
+    }
+    
+    .rotator-slider::-moz-range-thumb {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #FFD700;
+      cursor: pointer;
+      border: none;
+    }
+    
+    .rotator-time-input {
+      width: 70px;
+      background: #2a2a2a;
+      border: 1px solid #444;
+      border-radius: 6px;
+      padding: 6px 8px;
+      color: white;
+      font-size: 13px;
+      text-align: center;
+      font-family: 'Courier New', monospace;
+    }
+    
+    .rotator-time-input:focus {
+      outline: none;
+      border-color: #FFD700;
+    }
+  </style>
+  
+  <div class="rotator-toggle-container">
+    <div class="rotator-toggle-switch" id="rotator-toggle">
+      <div class="rotator-toggle-circle"></div>
+    </div>
+  </div>
+  
+  <div class="rotator-texts-container" id="rotator-texts-list"></div>
+  
+  <div class="rotator-interval-container">
+    <input type="range" class="rotator-slider" id="rotator-slider" min="10" max="60" value="10">
+    <input type="text" class="rotator-time-input" id="rotator-time-display" value="00:10">
+  </div>
+`;
+
+const toggle = document.getElementById('rotator-toggle');
+const textsList = document.getElementById('rotator-texts-list');
+const slider = document.getElementById('rotator-slider');
+const timeDisplay = document.getElementById('rotator-time-display');
+
+// Format time as MM:SS
+function formatTime(seconds) {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
+// Parse time from MM:SS
+function parseTime(timeStr) {
+  const parts = timeStr.split(':');
+  if (parts.length !== 2) return null;
+  const mins = parseInt(parts[0], 10);
+  const secs = parseInt(parts[1], 10);
+  if (isNaN(mins) || isNaN(secs)) return null;
+  return mins * 60 + secs;
+}
+
+// Render text inputs
+function renderTexts() {
+  textsList.innerHTML = '';
+  
+  texts.forEach((text, index) => {
+    const item = document.createElement('div');
+    item.className = 'rotator-text-item';
+    
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'rotator-text-input';
+    input.value = text;
+    input.placeholder = 'Enter text...';
+    
+    input.addEventListener('input', (e) => {
+      texts[index] = e.target.value;
+      updateRotatorState();
+    });
+    
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'rotator-btn rotator-btn-delete';
+    deleteBtn.innerHTML = '🗑';
+    deleteBtn.title = 'Delete';
+    
+    deleteBtn.addEventListener('click', () => {
+      if (texts.length > 1) {
+        texts.splice(index, 1);
+        renderTexts();
+        updateRotatorState();
+      }
+    });
+    
+    item.appendChild(input);
+    item.appendChild(deleteBtn);
+    textsList.appendChild(item);
+  });
+  
+  // Add plus button below all text items
+  const addBtn = document.createElement('button');
+  addBtn.className = 'rotator-btn rotator-btn-add';
+  addBtn.innerHTML = '+';
+  addBtn.title = 'Add new text';
+  
+  addBtn.addEventListener('click', () => {
+    texts.push('');
+    renderTexts();
+    updateRotatorState();
+    
+    // Focus new input
+    setTimeout(() => {
+      const inputs = textsList.querySelectorAll('.rotator-text-input');
+      inputs[inputs.length - 1].focus();
+    }, 50);
+  });
+  
+  textsList.appendChild(addBtn);
+}
+
+// Update slider display
+function updateSliderDisplay() {
+  timeDisplay.value = formatTime(intervalSeconds);
+  slider.value = Math.min(intervalSeconds, 60);
+}
+
+// Slider change
+slider.addEventListener('input', (e) => {
+  intervalSeconds = parseInt(e.target.value, 10);
+  updateSliderDisplay();
+  updateRotatorState();
+});
+
+// Time input change
+timeDisplay.addEventListener('change', (e) => {
+  const parsed = parseTime(e.target.value);
+  if (parsed !== null && parsed >= 1) {
+    intervalSeconds = parsed;
+    updateSliderDisplay();
+    updateRotatorState();
+  } else {
+    updateSliderDisplay();
+  }
+});
+
+// Load rotator state
+async function loadRotatorState() {
+  if (isUpdating) return;
+  
+  try {
+    const res = await fetch(`${apiUrl}/api/text-rotator/state`, { headers: getHeaders() });
+    const data = await res.json();
+    
+    const oldActive = rotatorActive;
+    const oldInterval = intervalSeconds;
+    
+    rotatorActive = data.isActive || false;
+    intervalSeconds = data.intervalSeconds || 10;
+    
+    // Only update texts if not currently editing
+    if (!document.activeElement || !document.activeElement.classList.contains('rotator-text-input')) {
+      texts = data.texts || ["DAUERWERBESENDUNG"];
+    }
+    
+    if (rotatorActive) {
+      toggle.classList.add('active');
+      panel.style.borderColor = moduleConfig.activeColor;
+    } else {
+      toggle.classList.remove('active');
+      panel.style.borderColor = moduleConfig.borderColor;
+    }
+    
+    // Only re-render if texts actually changed and not editing
+    if (!document.activeElement || !document.activeElement.classList.contains('rotator-text-input')) {
+      renderTexts();
+    }
+    updateSliderDisplay();
+  } catch (err) {
+    console.error('[TEXT-ROTATOR] Load state error:', err);
+  }
+}
+
+// Update rotator state
+async function updateRotatorState() {
+  if (isUpdating) return;
+  isUpdating = true;
+  
+  try {
+    await fetch(`${apiUrl}/api/text-rotator/state`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ 
+        isActive: rotatorActive,
+        texts: texts,
+        intervalSeconds: intervalSeconds
+      })
+    });
+  } catch (err) {
+    console.error('[TEXT-ROTATOR] Update state error:', err);
+  } finally {
+    isUpdating = false;
+  }
+}
+
+// Toggle event
+toggle.addEventListener('click', async () => {
+  isUpdating = true;
+  rotatorActive = !rotatorActive;
+  
+  if (rotatorActive) {
+    toggle.classList.add('active');
+    panel.style.borderColor = moduleConfig.activeColor;
+  } else {
+    toggle.classList.remove('active');
+    panel.style.borderColor = moduleConfig.borderColor;
+  }
+  
+  try {
+    await fetch(`${apiUrl}/api/text-rotator/state`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ 
+        isActive: rotatorActive,
+        texts: texts,
+        intervalSeconds: intervalSeconds
+      })
+    });
+  } catch (err) {
+    console.error('[TEXT-ROTATOR] Toggle error:', err);
+  } finally {
+    isUpdating = false;
+  }
+});
+
+// Initialize
+loadRotatorState();
+rotatorInterval = setInterval(loadRotatorState, 30000); // Changed to 30 seconds
+
+// Return module instance
+return {
+  destroy: function() {
+    if (rotatorInterval) {
+      clearInterval(rotatorInterval);
+    }
+  }
+};
+  </script>
+  
+  <!-- ==========================================
+       OBS OVERLAY STYLES
+       ========================================== -->
+  <style>
+    @font-face {
+      font-family: 'CustomStreamFont';
+      src: url('/fonts/font.ttf') format('truetype');
+      font-weight: normal;
+      font-style: normal;
+      font-display: swap;
+    }
+    
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      background: transparent;
+      font-family: 'CustomStreamFont', Arial, sans-serif;
+      color: white;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+    
+    .text-container {
+      position: relative;
+      width: 100%;
+      height: 100vh;
+      display: flex;
+      justify-content: flex-start;
+      align-items: center;
+      background: transparent;
+      padding-left: 50px;
+    }
+    
+    .rotating-text {
+      font-size: 72px;
+      font-weight: bold;
+      text-align: left;
+      text-transform: uppercase;
+      letter-spacing: 4px;
+      white-space: nowrap;
+      opacity: 0;
+      transition: opacity 1s ease-in-out;
+    }
+    
+    .rotating-text.visible {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <!-- ==========================================
+       OBS OVERLAY HTML
+       ========================================== -->
+  <div class="text-container">
+    <div class="rotating-text" id="rotatingText"></div>
+  </div>
+  
+  <!-- ==========================================
+       OBS OVERLAY SCRIPT
+       ========================================== -->
+  <script>
+    const API_URL = window.location.origin;
+    const textElement = document.getElementById('rotatingText');
+    
+    let currentState = {
+      isActive: false,
+      texts: [],
+      intervalSeconds: 10
+    };
+    let currentIndex = 0;
+    let rotationTimer = null;
+    
+    async function fetchState() {
+      try {
+        const res = await fetch(`${API_URL}/api/text-rotator/public`);
+        const data = await res.json();
+        
+        const stateChanged = 
+          data.isActive !== currentState.isActive ||
+          JSON.stringify(data.texts) !== JSON.stringify(currentState.texts) ||
+          data.intervalSeconds !== currentState.intervalSeconds;
+        
+        currentState = data;
+        
+        if (stateChanged) {
+          console.log('[TEXT-ROTATOR] State changed:', currentState);
+          resetRotation();
+        }
+      } catch (err) {
+        console.error('[TEXT-ROTATOR] Error fetching state:', err);
+      }
+    }
+    
+    function showText(text) {
+      textElement.classList.remove('visible');
+      
+      setTimeout(() => {
+        textElement.textContent = text;
+        textElement.classList.add('visible');
+      }, 1000);
+    }
+    
+    function hideText() {
+      textElement.classList.remove('visible');
+    }
+    
+    function rotateText() {
+      if (!currentState.isActive || currentState.texts.length === 0) {
+        hideText();
+        return;
+      }
+      
+      const text = currentState.texts[currentIndex];
+      showText(text);
+      
+      currentIndex = (currentIndex + 1) % currentState.texts.length;
+    }
+    
+    function resetRotation() {
+      if (rotationTimer) {
+        clearInterval(rotationTimer);
+        rotationTimer = null;
+      }
+      
+      currentIndex = 0;
+      
+      if (currentState.isActive && currentState.texts.length > 0) {
+        rotateText();
+        rotationTimer = setInterval(rotateText, currentState.intervalSeconds * 1000);
+      } else {
+        hideText();
+      }
+    }
+    
+    // Check state every 2 seconds
+    setInterval(fetchState, 2000);
+    fetchState();
+  </script>
+</body>
+</html>
