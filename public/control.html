@@ -155,6 +155,42 @@
       color: white;
     }
     
+    /* ========== REFRESH BUTTON ========== */
+    
+    .refresh-button {
+      position: fixed;
+      top: 80px;
+      left: 20px;
+      width: 50px;
+      height: 50px;
+      background: #2a2a2a;
+      border: 2px solid #3a3a3a;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      transition: all 0.3s;
+      z-index: 1000;
+    }
+    
+    .refresh-button:hover {
+      background: #3a3a3a;
+      border-color: #4CAF50;
+      transform: rotate(90deg);
+    }
+    
+    .refresh-button.spinning {
+      animation: spin 1s linear;
+      pointer-events: none;
+    }
+    
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    
     /* ========== LANGUAGE SELECTOR ========== */
     
     .language-selector {
@@ -468,6 +504,11 @@
     </div>
   </div>
 
+  <!-- ========== REFRESH BUTTON ========== -->
+  <button class="refresh-button hidden" id="refreshButton" title="Refresh all modules">
+    🔄
+  </button>
+
   <!-- ========== LANGUAGE SELECTOR ========== -->
   <div class="language-selector hidden" id="languageSelector">
     <button class="btn-language" id="btn-german" data-lang="de">
@@ -491,6 +532,7 @@
     let currentLanguage = 'en';
     let moduleChoices = {};
     let pendingConflicts = [];
+    let currentUser = null;
     
     // ========== DOM ELEMENTS ==========
     const loginScreen = document.getElementById('loginScreen');
@@ -505,6 +547,56 @@
     const languageSelector = document.getElementById('languageSelector');
     const btnGerman = document.getElementById('btn-german');
     const btnEnglish = document.getElementById('btn-english');
+    const refreshButton = document.getElementById('refreshButton');
+    
+    // ========== LOCAL STORAGE FUNCTIONS ==========
+    
+    function saveLoginState(code, user) {
+      try {
+        localStorage.setItem('streamdesk_code', code);
+        localStorage.setItem('streamdesk_user', JSON.stringify(user));
+        localStorage.setItem('streamdesk_timestamp', Date.now().toString());
+      } catch (e) {
+        console.warn('[STORAGE] Could not save login state');
+      }
+    }
+    
+    function getLoginState() {
+      try {
+        const code = localStorage.getItem('streamdesk_code');
+        const userStr = localStorage.getItem('streamdesk_user');
+        const timestamp = localStorage.getItem('streamdesk_timestamp');
+        
+        if (!code || !userStr) return null;
+        
+        // Check if saved within last 24 hours
+        if (timestamp) {
+          const age = Date.now() - parseInt(timestamp);
+          if (age > 24 * 60 * 60 * 1000) {
+            clearLoginState();
+            return null;
+          }
+        }
+        
+        return {
+          code: code,
+          user: JSON.parse(userStr)
+        };
+      } catch (e) {
+        console.warn('[STORAGE] Could not load login state');
+        return null;
+      }
+    }
+    
+    function clearLoginState() {
+      try {
+        localStorage.removeItem('streamdesk_code');
+        localStorage.removeItem('streamdesk_user');
+        localStorage.removeItem('streamdesk_timestamp');
+      } catch (e) {
+        console.warn('[STORAGE] Could not clear login state');
+      }
+    }
     
     // ========== UTILITY FUNCTIONS ==========
     
@@ -520,6 +612,43 @@
       }
       return headers;
     }
+    
+    // ========== REFRESH FUNCTION ==========
+    
+    async function refreshModules() {
+      console.log('[REFRESH] Reloading all modules...');
+      
+      refreshButton.classList.add('spinning');
+      
+      // Destroy all loaded modules
+      loadedModules.forEach(mod => {
+        if (mod.instance && mod.instance.destroy) {
+          try {
+            mod.instance.destroy();
+          } catch (e) {
+            console.warn(`[REFRESH] Error destroying ${mod.id}:`, e);
+          }
+        }
+      });
+      
+      loadedModules = [];
+      mainContainer.innerHTML = '';
+      moduleChoicesContainer.innerHTML = '';
+      moduleChoicesContainer.classList.add('hidden');
+      pendingConflicts = [];
+      
+      // Wait for animation
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Reload modules
+      await loadModules();
+      
+      refreshButton.classList.remove('spinning');
+      
+      console.log('[REFRESH] ✅ Modules reloaded');
+    }
+    
+    refreshButton.addEventListener('click', refreshModules);
     
     // ========== LANGUAGE FUNCTIONS ==========
     
@@ -556,6 +685,7 @@
         const data = await res.json();
         
         if (!data.authRequired) {
+          // No auth required - auto login
           sessionId = generateSessionId();
           const loginRes = await fetch(`${API_URL}/api/auth/verify`, {
             method: 'POST',
@@ -565,13 +695,50 @@
           const loginData = await loginRes.json();
           
           if (loginData.success) {
+            saveLoginState('000000', loginData.user);
             showMainContainer(loginData.user);
           }
         } else {
-          loginScreen.classList.remove('hidden');
+          // Auth required - check saved login
+          const savedLogin = getLoginState();
+          
+          if (savedLogin) {
+            console.log('[AUTH] Found saved login, attempting auto-login...');
+            await attemptAutoLogin(savedLogin.code, savedLogin.user);
+          } else {
+            loginScreen.classList.remove('hidden');
+          }
         }
       } catch (err) {
         console.error('[AUTH] Check error:', err);
+        loginScreen.classList.remove('hidden');
+      }
+    }
+    
+    async function attemptAutoLogin(code, user) {
+      sessionId = generateSessionId();
+      
+      try {
+        const res = await fetch(`${API_URL}/api/auth/verify`, {
+          method: 'POST',
+          headers: getHeaders(),
+          body: JSON.stringify({ code, sessionId })
+        });
+        
+        const data = await res.json();
+        
+        if (data.success) {
+          console.log('[AUTH] Auto-login successful');
+          saveLoginState(code, data.user);
+          showMainContainer(data.user);
+        } else {
+          console.log('[AUTH] Auto-login failed, clearing saved state');
+          clearLoginState();
+          loginScreen.classList.remove('hidden');
+        }
+      } catch (err) {
+        console.error('[AUTH] Auto-login error:', err);
+        clearLoginState();
         loginScreen.classList.remove('hidden');
       }
     }
@@ -599,6 +766,7 @@
         
         if (data.success) {
           errorMessage.classList.remove('show');
+          saveLoginState(code, data.user);
           showMainContainer(data.user);
         } else {
           errorMessage.classList.add('show');
@@ -972,6 +1140,9 @@
       loginScreen.classList.add('hidden');
       userProfileBox.classList.remove('hidden');
       languageSelector.classList.remove('hidden');
+      refreshButton.classList.remove('hidden');
+      
+      currentUser = user;
       
       if (user) {
         userName.textContent = user.name;
